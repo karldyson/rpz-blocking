@@ -1,0 +1,122 @@
+#!/usr/bin/perl
+
+use strict;
+use Net::DNS;
+
+my $usage = "$0 <domain> [nxdomain|white|remove|redirect [a.b.c.d]] <wild>";
+
+# get a domain & strip any trailing dot
+my $domain = shift || die "no domain\n$usage\n";
+$domain =~ s/\.$//;
+
+# get an action to perform
+my $action = shift || 'nxdomain';
+
+# initialise the update
+my $update = new Net::DNS::Update('override.');
+
+# append the domain with the override zone name
+$domain .= ".override.";
+
+# what action are we performing?
+# set relevant prereqs and craft the update(s).
+
+# nxdomain?
+if($action eq 'nxdomain') {
+	my $wildcard = shift;
+	$update->push(prereq => nxrrset("$domain ANY"));
+	$update->push(update => rr_add("$domain 5 CNAME ."));
+	if($wildcard eq 'wild') {
+		$update->push(prereq => nxrrset("*.$domain ANY"));
+		$update->push(update => rr_add("*.$domain 5 CNAME ."));
+	}
+}
+# white list it?
+elsif($action eq 'white') {
+	my $wildcard = shift;
+	$update->push(prereq => nxrrset("$domain ANY"));
+	$update->push(update => rr_add("$domain 5 CNAME rpz-passthru."));
+	if($wildcard eq 'wild') {
+		$update->push(prereq => nxrrset("*.$domain ANY"));
+		$update->push(update => rr_add("*.$domain 5 CNAME rpz-passthru."));
+	}
+}
+# remove the entries?
+elsif($action eq 'remove') {
+#	$update->push(prereq => yxrrset("$domain ANY"));
+	$update->push(update => rr_del("$domain ANY"));
+#	$update->push(prereq => yxrrset("*.$domain ANY"));
+	$update->push(update => rr_del("*.$domain ANY"));
+}
+# redirect?
+# TODO: make this more generic than A RR
+elsif($action eq 'redirect') {
+	my $type = shift || die "no redirect\n";
+	my $destination = shift;
+	my $wildcard = shift;
+	$type = uc($type) if $destination;
+	print "got type $type and destination $destination\n";
+	my $redirect;
+	if(uc($type) eq 'A' && $destination =~ m/^\d+\.\d+\.\d+\.\d+$/) {
+		$redirect = "$type $destination";
+	}
+	elsif(uc($type) eq 'CNAME' && $destination =~ m/^[0-9a-zA-Z\-\.]+$/ && $destination !~ m/\.\./) {
+		$redirect = "$type $destination";
+	}
+	elsif(uc($type) eq 'AAAA' && $destination =~ m/^[0-9a-fA-F:]+$/) {
+		$redirect = "$type $destination";
+	}
+	elsif(!$destination) {
+		if($type =~ m/^\d+\.\d+\.\d+\.\d+$/) {
+			$redirect = "A $type";
+		}
+		elsif($type =~ m/^[0-9a-fA-F:]+$/) {
+			$redirect = "AAAA $type";
+		}
+		elsif($type =~ m/^[0-9a-zA-Z\-\.]+$/ && $type !~ m/\.\./) {
+			$redirect = "CNAME $type";
+		}
+		else {
+			die "cannot determine destination $type in order to guess RR type\n";
+		}
+	}
+	else {
+		die "invalid type/destination combination $type/$destination\n";
+	}
+	print "redirecting to $redirect\n";
+	$update->push(update => rr_add("$domain 5 $redirect"));
+	if($wildcard eq 'wild') {
+		$update->push(update => rr_add("*.$domain 5 $redirect"));
+	}
+}
+# barf because we got an invalid action...
+else {
+	die "unknown action $action\n$usage\n";
+}
+
+# print the update to aid the user
+print $update->print;
+
+# initialise a resolver object
+my $resolver = new Net::DNS::Resolver;
+
+# to the local nameserver
+$resolver->nameservers('127.0.0.1');
+
+# force TCP
+$resolver->usevc(1);
+
+# send the update in
+my $reply = $resolver->send($update);
+
+# did we get a reply?
+if($reply) {
+	# did it work? (we expect NOERROR)
+	if($reply->header->rcode eq 'NOERROR') {
+		print "OK\n";
+	} else { # it failed; why?
+		print "FAILED: ".$reply->header->rcode."\n";
+	}
+} else { # we didn't get a reply... why?
+	print "FAILED: ".$resolver->errorstring."\n";
+}

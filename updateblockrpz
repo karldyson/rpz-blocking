@@ -1,0 +1,64 @@
+#!/bin/bash
+
+#LIST=spark
+LIST=ultimate
+
+cd /var/cache/bind/rpz
+
+before=`stat rpz.txt | shasum | awk '{print $1}'`
+
+https_proxy=proxy:3128 /usr/bin/wget -qN https://block.energized.pro/${LIST}/formats/rpz.txt
+
+if [[ $? -ne 0 ]]
+then
+	echo failed to fetch
+	exit 99
+fi
+
+after=`stat rpz.txt | shasum | awk '{print $1}'`
+
+#echo before $before
+#echo after. $after
+
+if [[ "$before" == "$after" ]]
+then
+	#echo nothing to do
+	exit 0
+fi
+
+# note, copy here, so rpz.txt is untouched to wget can do timestamping
+# meaning we don't fetch it if it's not changed on the remote server
+cp rpz.txt block.tmp
+
+if [[ $? -ne 0 ]]
+then
+	echo failed to copy
+	exit 99
+fi
+
+# replace the SOA, mostly so the serial is updated as we're gonna slave this
+/bin/sed -i "s/^@ IN SOA.*/@ IN SOA localhost. root.localhost. (`date +%s` 900 300 4w 300)/" block.tmp
+
+if [[ $? -ne 0 ]]
+then
+	echo failed to sed
+	exit 99
+fi
+
+# move the tmp file into place
+mv block.tmp block
+
+if [[ $? -ne 0 ]]
+then
+	echo failed to move
+	exit 99
+fi
+
+# reload the zone
+/usr/sbin/rndc reload block
+
+if [[ $? -ne 0 ]]
+then
+	echo failed to reload
+	exit 99
+fi

@@ -1,0 +1,81 @@
+#!/usr/bin/perl
+
+use strict;
+use Net::DNS;
+
+my $usage = "$0 <ip> [nxdomain|white|remove|drop]";
+
+# get a domain & strip any trailing dot
+my $clientIp = shift || die "no client\n$usage\n";
+
+my $client = "32.";
+if($clientIp =~ /^\d+\.\d+\.\d+\.\d+$/) {
+	$client .= join(".", reverse(split(/\./, $clientIp)));
+} else {
+	print "Only IPv4 is supported at this time\n";
+	exit;
+}
+
+$client .= '.rpz-client-ip';
+
+# get an action to perform
+my $action = shift || 'white';
+
+# initialise the update
+my $update = new Net::DNS::Update('override.');
+
+# append the domain with the override zone name
+$client .= ".override.";
+
+# what action are we performing?
+# set relevant prereqs and craft the update(s).
+
+# nxdomain?
+if($action eq 'nxdomain') {
+	$update->push(prereq => nxrrset("$client ANY"));
+	$update->push(update => rr_add("$client 5 CNAME ."));
+}
+# white list it?
+elsif($action eq 'white') {
+	$update->push(prereq => nxrrset("$client ANY"));
+	$update->push(update => rr_add("$client 5 CNAME rpz-passthru."));
+}
+# remove the entries?
+elsif($action eq 'remove') {
+	$update->push(update => rr_del("$client ANY"));
+}
+# block
+elsif($action eq 'drop') {
+	$update->push(update => rr_add("$client 5 CNAME rpz-drop."));
+}
+# barf because we got an invalid action...
+else {
+	die "unknown action $action\n$usage\n";
+}
+
+# print the update to aid the user
+print $update->print;
+
+# initialise a resolver object
+my $resolver = new Net::DNS::Resolver;
+
+# to the local nameserver
+$resolver->nameservers('127.0.0.1');
+
+# force TCP
+$resolver->usevc(1);
+
+# send the update in
+my $reply = $resolver->send($update);
+
+# did we get a reply?
+if($reply) {
+	# did it work? (we expect NOERROR)
+	if($reply->header->rcode eq 'NOERROR') {
+		print "OK\n";
+	} else { # it failed; why?
+		print "FAILED: ".$reply->header->rcode."\n";
+	}
+} else { # we didn't get a reply... why?
+	print "FAILED: ".$resolver->errorstring."\n";
+}
