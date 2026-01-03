@@ -6,7 +6,7 @@ There may be hard coded things here, like the name of the zonefile, etc.
 
 They're mostly here as a backup away from my servers, but if they're useful to you, help yourself.
 
-There's a [blog article](https://karld.blog/2021/03/02/blocking-adverts-tracking-malware-with-rpz/) that talks about how to implement this like I have that you could tweak to your own needs.
+There's a [blog article](https://karld.blog/posts/blocking-adverts-tracking-malware-rpz/) that talks about how to implement this like I have that you could tweak to your own needs.
 
 ## updateblockrpz ##
 
